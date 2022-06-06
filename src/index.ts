@@ -90,11 +90,39 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
     return this.#echoEnabled
   }
 
+  /** Indicates if responses should be sent to the DTE */
+  #quietMode = false
+
+  get quietMode () {
+    return this.#quietMode
+  }
+
+  /** Indicates that the device is no longer responding to commands and is ready to be powered down */
+  #readyForShutdown = false
+
+  get readyForShutdown () {
+    return this.#readyForShutdown
+  }
+
+  /** Indicates if radio activty is enabled (must be enabled for SDBI[XA] sessions) */
+  #radioActivityEnabled = true
+
+  get radioActivityEnabled () {
+    return this.radioActivityEnabled
+  }
+
   /** Indicates if ring alerts is enabled on the emulator */
   #ringAlertsEnabled = false
 
   get ringAlertsEnabled () {
     return this.#ringAlertsEnabled
+  }
+
+  /** Indicates if there is an active ring alert waiting to be answered */
+  #ringAlertActive = false
+
+  get ringAlertActive () {
+    return this.#ringAlertActive
   }
 
   /** The quality of signal the emulator should mock */
@@ -179,6 +207,41 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
   get binaryBufferTimeout () {
     return this.#binaryBufferTimeout
+  }
+
+  /* The software revision level of the module */
+  #softwareRevisionLevel = 'TA20003'
+
+  get softwareRevisionLevel () {
+    return this.#softwareRevisionLevel
+  }
+
+  /* The product description of the module */
+  #productDescription = 'IRIDIUM 9600 Family'
+
+  get productDescription () {
+    return this.#productDescription
+  }
+
+  /* Model number of the module */
+  #deviceModel = 'IRIDIUM 9600 Family SBD Transceiver'
+
+  get deviceModel () {
+    return this.#deviceModel
+  }
+
+  /* Serial number of the module */
+  #serialNumber = '10000000000000'
+
+  get serialNumber () {
+    return this.#serialNumber
+  }
+
+  /* The hardware specification of the module */
+  #hardwareSpecification = 'BOOT07d4/9603NrevDE/04/RAW0c'
+
+  get hardwareSpecification () {
+    return this.#hardwareSpecification
   }
 
   /** The JWT signer key which is used to sign outbound messages */
@@ -305,7 +368,9 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
   #write (data: string): void {
     this.#logger.info(`>> ${data}`)
-    this.#port.write(data + '\r\n')
+    if (!this.quietMode) {
+      this.#port.write(data + '\r\n')
+    }
   }
 
   #toggleBinaryMode = (binaryBufferLength?: number): void => {
@@ -386,6 +451,9 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
       return
     }
 
+    // we are no longer processing commands...
+    if (this.#readyForShutdown) return
+
     if (data instanceof Buffer) {
       this.#write('ERROR')
       return
@@ -408,12 +476,6 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
     await delay(SIMPLE_WAIT_TIME)
 
     switch (command) {
-      /** Flow Control */
-      case 'AT&K0': // Disable
-      case 'AT&K3': // Enable
-        this.#write('OK')
-        break
-
       /** Disable DTE Echo */
       case 'ATE0':
         this.#echoEnabled = false
@@ -423,6 +485,196 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
       /** Enable DTE Echo */
       case 'ATE1':
         this.#echoEnabled = true
+        this.#write('OK')
+        break
+
+      /** Identification - Compatability */
+      case 'ATI0':
+        this.#write('2400')
+        this.#write('OK')
+        break
+
+      /** Identification - Compatability */
+      case 'ATI1':
+        this.#write('0000')
+        this.#write('OK')
+        break
+
+      /** Identification - Compatability */
+      case 'ATI2':
+        this.#write('OK')
+        this.#write('OK')
+        break
+
+      /** Identification - Software Revision Level */
+      case 'ATI3':
+        this.#write(this.#softwareRevisionLevel)
+        this.#write('OK')
+        break
+
+      /** Identification - Product Description */
+      case 'ATI4':
+        this.#write(this.#productDescription)
+        this.#write('OK')
+        break
+
+      /** Identification - Compatability */
+      case 'ATI5':
+        this.#write('8861')
+        this.#write('OK')
+        break
+
+      /** Identification - Factory Identity */
+      case 'ATI6':
+        this.#write('16E')
+        this.#write('OK')
+        break
+
+      /** Identification - Hardware Specification */
+      case 'ATI7':
+        this.#write(this.hardwareSpecification)
+        this.#write('OK')
+        break
+
+      /** Quiet Mode - Disable */
+      case 'ATQ0':
+        this.#quietMode = false
+        this.#write('OK')
+        break
+
+      /** Quiet Mode - Enable */
+      case 'ATQ1':
+        this.#quietMode = true
+        this.#write('OK')
+        break
+
+      /** Verbose Mode - Disable */
+      case 'ATV0':
+        // not supported
+        this.#write('ERROR')
+        break
+
+      /** Verbose Mode - Enable */
+      case 'ATV1':
+        this.#write('OK')
+        break
+
+      /** Restore User Config */
+      case 'ATZ0': // Profile 0
+      case 'ATZ1': // Profile 1
+        this.#write('OK')
+        break
+
+      /** Restore Factory Settings */
+      case 'AT&F0':
+        this.#write('OK')
+        break
+
+      /** Flow Control */
+      case 'AT&K0': // Disable
+      case 'AT&K3': // Enable
+        this.#write('OK')
+        break
+
+      /** View Active and Stored Configuration */
+      case 'AT&V':
+        this.#write('ACTIVE PROFILE: ')
+        this.#write('E0 Q0 V1 &D2 &K0')
+        this.#write('S000:013 S004:010 S005:008 S013:049 S014:168 S021:048 S013:012 S039:000')
+        this.#write('STORED PROFILE 0:')
+        this.#write('E0 Q0 V1 &D2 &K0')
+        this.#write('S000:013 S004:010 S005:008 S013:049 S014:168 S021:048 S013:012 S039:000')
+        this.#write('STORED PROFILE 1:')
+        this.#write('E0 Q0 V1 &D2 &K0')
+        this.#write('S000:013 S004:010 S005:008 S013:049 S014:168 S021:048 S013:012 S039:000')
+        this.#write('OK')
+        break
+
+      /** Store Active Configuration */
+      case 'AT&W0': // Profile 0
+      case 'AT&W1': // Profile 1
+        this.#write('OK')
+        break
+
+      /** Designate Default Reset Profile */
+      case 'AT&Y0': // Profile 0
+      case 'AT&Y1': // Profile 1
+        this.#write('OK')
+        break
+
+      /** Display Registers */
+      case 'AT%R':
+        this.#write('REG  DEC HEX  REG  DEC HEX')
+        for (let i = 0; i < 128; i += 2) {
+          await delay(SIMPLE_WAIT_TIME)
+          this.#write('')
+          this.#write(`S${String(i).padStart(3, '0')} 000 00H  S${String(i + 1).padStart(3, '0')} 000 00H`)
+        }
+        this.#write('OK')
+        break
+
+      /** Flush to EEPROM */
+      case 'AT*F':
+        this.#readyForShutdown = true
+        this.#quietMode = true
+        break
+
+      /** Radio Activity - Disable */
+      case 'AT*R0':
+        this.#radioActivityEnabled = false
+        this.#write('OK')
+        break
+
+      /** Radio Activity - Enable */
+      case 'AT*R1':
+        this.#radioActivityEnabled = true
+        this.#write('OK')
+        break
+
+      /** Real Clock Time */
+      case 'AT+CCLK':
+        // TODO: Better support for this
+        this.#write('ERROR')
+        break
+
+      /** Manufacturer Identification */
+      case 'AT+GMI':
+      case 'AT+CGMI':
+        this.#write('Iridium')
+        this.#write('OK')
+        break
+
+      /** Model Identification */
+      case 'AT+GMM':
+      case 'AT+CGMM':
+        this.#write(this.#deviceModel)
+        this.#write('OK')
+        break
+
+      /** Revision Identification */
+      case 'AT+GMR':
+      case 'AT+CGMR':
+        this.#write(`Call Processor Version: ${this.#softwareRevisionLevel}`)
+        this.#write('')
+        this.#write('Modem DSP Version: 1.7 sv: 4343')
+        this.#write('')
+        this.#write('DBB Version: 0x0001 (ASIC)')
+        this.#write('')
+        this.#write('RFA Version: 0x0007 (SRFA2)')
+        this.#write('')
+        this.#write('NVM Version: KVS')
+        this.#write('')
+        this.#write(`Hardware Version: ${this.hardwareSpecification}`)
+        this.#write('')
+        this.#write('BOOT Verson: 2004 TD2-BLB960X-27 R4710')
+        this.#write('')
+        this.#write('OK')
+        break
+
+      /** Serial Number Identification */
+      case 'AT+GSN':
+      case 'AT+CGSN':
+        this.#write(this.#serialNumber)
         this.#write('OK')
         break
 
@@ -460,51 +712,54 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
         break
 
-      /** Short Burst Data: Clear SBD Message Buffer(s) */
-      case 'AT+SBDD0':
-        this.#moBuffer.fill(0)
-        this.#write('OK')
-        break
-      case 'AT+SBDD1':
-        this.#mtBuffer = ''
-        this.#write('OK')
-        break
-      case 'AT+SBDD2':
-        this.#moBuffer.fill(0)
-        this.#mtBuffer = ''
+      /** Ring Indication Status */
+      case 'AT+CRIS':
+        this.#write(`+CRIS:${this.ringAlertActive ? '1' : '0'}`)
         this.#write('OK')
         break
 
-      /** Short Burst Data: Automatic Registration */
-      case 'AT+SBDAREG=':
-        switch (detail) {
-          case '0': // Disable Automatic SBD Network Registration (default)
-          case '1': // Set the Automatic SBD Network Registration mode to "Automatic"
-          case '2': // Set the Automatic SBD Network Registration mode to "Ask"
-            this.#write('OK')
-            break
-          default:
-            this.#write('ERROR')
-        }
+      /** Signal Quality */
+      case 'AT+CSQ':
+        await delay(2 * SECOND)
+        this.#write(`+CSQ:${this.signalQualityRating}`)
+        this.#write('OK')
         break
 
-      /** Short Burst Data: Mobile-Terminated Alert */
-      case 'AT+SBDMTA=':
-        switch (detail) {
-          case '0': // Disable SBD Ring Alert indication
-            this.#ringAlertsEnabled = false
-            this.#write('OK')
-            break
-          case '1': // Enable SBD Ring Alert indication (default)
-            this.#ringAlertsEnabled = true
-            this.#write('OK')
-            break
-          default:
-            this.#write('ERROR')
-        }
+      /** Signal Quality - Fast (Last Known) */
+      case 'AT+CSQF':
+        this.#write(`+CSQF:${this.signalQualityRating}`)
+        this.#write('OK')
         break
 
-      /* Short Burst Data: Write Binary Data to the ISU */
+      /** Unlock Device */
+      case 'AT+CULK':
+        // TODO: Better support for this
+        this.#write('OK')
+        break
+
+      /** Unlock Device - Status */
+      case 'AT+CULK?':
+        // TODO: Better support for this
+        this.#write('0')
+        this.#write('OK')
+        break
+
+      /** Fixed DTE Rate */
+      case 'AT+IPR':
+        this.#write('OK')
+        break
+
+      /** Short Burst Data: Write a Text Message to the Module */
+      case 'AT+SBDWT=':
+        // TODO: Support for this command
+        break
+
+      /** Short Burst Data: Read a Text Message from the Module */
+      case 'AT+SBDRT':
+        // TODO: Support for this command
+        break
+
+      /** Short Burst Data: Write Binary Data to the ISU */
       case 'AT+SBDWB=': {
         let length = 0
         try {
@@ -529,6 +784,13 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
       case 'AT+SBDIX':
       case 'AT+SBDIXA': {
         const waitTime = LONG_WAIT_TIME
+
+        if (!this.radioActivityEnabled) {
+          this.#logger.warn('Radio activity is currently disabled. Unable to initiate simulated SBD session.')
+          this.#write(`+SBDIX: 34, ${this.#moSequenceNo}, 2, ${this.#mtSequenceNo}, 0, 0`)
+          this.#write('OK')
+          break
+        }
 
         this.#logger.debug(`Initiating simulated SBD session. Waiting ${Math.round(waitTime / SECOND)} seconds...`)
 
@@ -586,6 +848,58 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
         break
       }
+
+      /** Short Burst Data: Detatch */
+      case 'AT+SBDDET':
+        // TODO: Support for this command
+        this.#write('+SBDDET:0,0')
+        this.#write('OK')
+        break
+
+      /** Short Burst Data: Mobile-Terminated Alert */
+      case 'AT+SBDMTA=':
+        switch (detail) {
+          case '0': // Disable SBD Ring Alert indication
+            this.#ringAlertsEnabled = false
+            this.#write('OK')
+            break
+          case '1': // Enable SBD Ring Alert indication (default)
+            this.#ringAlertsEnabled = true
+            this.#write('OK')
+            break
+          default:
+            this.#write('ERROR')
+        }
+        break
+
+      /** Short Burst Data: Automatic Registration */
+      case 'AT+SBDAREG=':
+        switch (detail) {
+          case '0': // Disable Automatic SBD Network Registration (default)
+          case '1': // Set the Automatic SBD Network Registration mode to "Automatic"
+          case '2': // Set the Automatic SBD Network Registration mode to "Ask"
+            this.#write('OK')
+            break
+          default:
+            this.#write('ERROR')
+        }
+        break
+
+      /** Short Burst Data: Clear SBD Message Buffer(s) */
+      case 'AT+SBDD0':
+        this.#moBuffer.fill(0)
+        this.#write('OK')
+        break
+      case 'AT+SBDD1':
+        this.#mtBuffer = ''
+        this.#write('OK')
+        break
+      case 'AT+SBDD2':
+        this.#moBuffer.fill(0)
+        this.#mtBuffer = ''
+        this.#write('OK')
+        break
+
       default:
         this.#logger.error('Command not supported in emulator')
         this.#write('ERROR')
@@ -626,6 +940,11 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
       case SignalQualityRating.RANDOM:
         minSignalQuality = SignalQuality.NONE
         maxSignalQuality = SignalQuality.FIVE
+    }
+
+    if (!this.radioActivityEnabled) {
+      minSignalQuality = SignalQuality.NONE
+      maxSignalQuality = SignalQuality.NONE
     }
 
     const current = this.#currentSignalQuality

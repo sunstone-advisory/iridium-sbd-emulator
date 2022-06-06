@@ -11,7 +11,7 @@ Using the com0com modem emulator available at https://sourceforge.net/projects/c
 * https://sourceforge.net/projects/com0com/files/latest/download 
 2. Create a virtual com port pair using com0com
 
-![Alt text](documentation/img/portpair.png?raw=true "Virtual Port Pair")
+![Alt text](documentation/img/portpair.PNG?raw=true "Virtual Port Pair")
 
 3. Create a new instance of the IridiumEmulator class
 
