@@ -108,7 +108,7 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
   #radioActivityEnabled = true
 
   get radioActivityEnabled () {
-    return this.radioActivityEnabled
+    return this.#radioActivityEnabled
   }
 
   /** Indicates if ring alerts is enabled on the emulator */
@@ -402,7 +402,8 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
     if (this.#binaryMode) {
       try {
-        this.#binaryBuffer = this.#binaryBuffer ? Buffer.concat([this.#binaryBuffer, Buffer.from(data)]) : Buffer.from(data)
+        const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data, 'hex')
+        this.#binaryBuffer = this.#binaryBuffer ? Buffer.concat([this.#binaryBuffer, chunk]) : chunk
       } catch (error: any) {
         this.#logger.error('Buffer overload. ' + error.message ?? '')
         this.#write('2')
@@ -756,7 +757,9 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
       /** Short Burst Data: Read a Text Message from the Module */
       case 'AT+SBDRT':
-        // TODO: Support for this command
+        this.#write('+SBDRT:')
+        this.#write(this.#mtBuffer)
+        this.#write('OK')
         break
 
       /** Short Burst Data: Write Binary Data to the ISU */
