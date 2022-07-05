@@ -434,6 +434,7 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
         this.#logger.debug(`Client provided checksum was '${checksum.toString('hex')}', calculated checksum was '${calculatedChecksum.toString('hex')}'`)
 
         if (checksum.equals(calculatedChecksum)) {
+          this.moBuffer.fill(0x00)
           buffer.copy(this.#moBuffer)
           this.#write('0')
         } else {
@@ -810,11 +811,12 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
           this.#mtSequenceNo++
 
           // match the rock7 service provider datetime format
-          const rbDateFormat = new Date().toISOString()
+          let rbDateFormat = new Date().toISOString()
             .substring(2) // drop century
             .replace('T', ' ') // drop time indicator
             .replace('Z', '') // drop UTC timezone
-            .substring(-4) // drop milliseconds
+          rbDateFormat = rbDateFormat
+            .substring(0, rbDateFormat.length - 4) // drop milliseconds
 
           this.#logger.debug('Emitting sbd-message event with message details')
           const claims = {
@@ -837,7 +839,7 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
             }
           }, {
             algorithm: 'RS256',
-            issuer: 'Rock7'
+            issuer: 'Rock 7'
           })
 
           this.emit('sbd-message', {
