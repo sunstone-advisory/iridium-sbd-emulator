@@ -798,7 +798,7 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
         this.#logger.debug(`Initiating simulated SBD session. Waiting ${Math.round(waitTime / SECOND)} seconds...`)
 
-        await delay(LONG_WAIT_TIME)
+        await delay(waitTime)
 
         // the connection was successful if we still have 2 or more
         // bars of signal. if we have 1 bar of signal then it should
@@ -818,10 +818,17 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
           rbDateFormat = rbDateFormat
             .substring(0, rbDateFormat.length - 4) // drop milliseconds
 
+          let index = 0
+          for (let i = this.moBuffer.length - 1; i >= 0; i--) {
+            if (this.moBuffer[i] === 0x00) continue
+            index = i
+            break
+          }
+
           this.#logger.debug('Emitting sbd-message event with message details')
           const claims = {
             momsn: this.#moSequenceNo,
-            data: this.moBuffer.slice(0, this.moBuffer.indexOf(0x00)).toString('hex'),
+            data: this.moBuffer.slice(0, index + 1).toString('hex'),
             serial: 206899,
             iridium_latitude: 50.2563,
             iridium_longitude: 82.2532,
