@@ -7,7 +7,7 @@ import { TypedEmitter } from 'tiny-typed-emitter'
 import { ReadlineParser } from '@serialport/parser-readline'
 import { InterByteTimeoutParser } from '@serialport/parser-inter-byte-timeout'
 
-import { delay, randomInterval } from './utils'
+import { calculateChecksum, delay, randomInterval, trimBuffer } from './utils'
 
 const MILLISECOND = 1
 const SECOND = MILLISECOND * 1000
@@ -168,10 +168,17 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
   }
 
   /** The current buffer for Mobile Terminated (MT) messages */
-  #mtBuffer: string
+  #mtBuffer: Buffer
 
   get mtBuffer () {
     return this.#mtBuffer
+  }
+
+  /** The remote queue of Mobile Terminated (MT) messages */
+  #mtQueue: Buffer[]
+
+  get mtQueue () {
+    return this.#mtQueue
   }
 
   /* The sequence number for Mobile Terminated (MT) messages */
@@ -292,8 +299,9 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
     this.#port.pipe(this.#readlineParser)
 
+    this.#mtQueue = []
     this.#moBuffer = Buffer.alloc(340)
-    this.#mtBuffer = '' // TODO: COnvert to buffer
+    this.#mtBuffer = Buffer.alloc(270)
     this.#binaryBuffer = null
     this.#binaryBufferLength = 0
     this.#binaryBufferTimeout = null
@@ -373,6 +381,13 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
     }
   }
 
+  #writeBinary (data: Buffer): void {
+    this.#logger.info(`>> ${data.toString('hex')}`)
+    if (!this.quietMode) {
+      this.#port.write(data)
+    }
+  }
+
   #toggleBinaryMode = (binaryBufferLength?: number): void => {
     if (this.#binaryBufferTimeout !== null) clearTimeout(this.#binaryBufferTimeout)
 
@@ -417,19 +432,7 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
         const buffer = this.#binaryBuffer.subarray(0, this.#binaryBuffer.length - 2)
         const checksum = this.#binaryBuffer.subarray(this.#binaryBuffer.length - 2, this.#binaryBuffer.length)
 
-        let sum = 0
-        for (let i = 0; i < buffer.length; i++) sum += buffer[i]
-
-        const calculatedChecksum = Buffer.alloc(2)
-
-        // set the least significant byte of the message summation
-        calculatedChecksum[1] = sum & 0xff
-
-        // drop the least significant byte
-        sum >>= 8
-
-        // set the (second) least significant byte of the message summation
-        calculatedChecksum[0] = sum & 0xff
+        const calculatedChecksum = calculateChecksum(buffer)
 
         this.#logger.debug(`Client provided checksum was '${checksum.toString('hex')}', calculated checksum was '${calculatedChecksum.toString('hex')}'`)
 
@@ -716,7 +719,7 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
       /** Ring Indication Status */
       case 'AT+CRIS':
-        this.#write(`+CRIS:${this.ringAlertActive ? '1' : '0'}`)
+        this.#write(`+CRIS:000,${this.ringAlertActive ? '001' : '000'}`)
         this.#write('OK')
         break
 
@@ -752,16 +755,38 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
         break
 
       /** Short Burst Data: Write a Text Message to the Module */
+        // TODO: Note only supports  the "AT+SBDWT=<text message>" form.
       case 'AT+SBDWT=':
-        // TODO: Support for this command
+        if (detail.length > 340) {
+          this.#logger.warn('SBD message size is not correct. The maximum mobile originated SBD message length is 340 bytes.')
+          this.#write('ERROR')
+          break
+        }
+
+        this.#moBuffer = Buffer.from(detail)
+        this.#write('OK')
+
         break
 
       /** Short Burst Data: Read a Text Message from the Module */
       case 'AT+SBDRT':
         this.#write('+SBDRT:')
-        this.#write(this.#mtBuffer)
+        this.#write(this.#mtBuffer.toString())
         this.#write('OK')
         break
+
+      /** Short Burst Data: Read Binary Data from the Module */
+      case 'AT+SBDRB': {
+        const buffer = trimBuffer(this.mtBuffer)
+        const checksum = calculateChecksum(buffer)
+
+        const length = Buffer.alloc(2)
+        length.writeUInt16BE(buffer.length)
+
+        this.#writeBinary(Buffer.concat([length, buffer, checksum]))
+        // this.#write(`${length}${buffer.toString('hex')}${checksum.toString('hex')}`)
+        break
+      }
 
       /** Short Burst Data: Write Binary Data to the ISU */
       case 'AT+SBDWB=': {
@@ -818,17 +843,12 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
           rbDateFormat = rbDateFormat
             .substring(0, rbDateFormat.length - 4) // drop milliseconds
 
-          let index = 0
-          for (let i = this.moBuffer.length - 1; i >= 0; i--) {
-            if (this.moBuffer[i] === 0x00) continue
-            index = i
-            break
-          }
+          const trimmedBuffer = trimBuffer(this.#moBuffer)
 
           this.#logger.debug('Emitting sbd-message event with message details')
           const claims = {
             momsn: this.#moSequenceNo,
-            data: this.moBuffer.slice(0, index + 1).toString('hex'),
+            data: trimmedBuffer.toString('hex'),
             serial: 206899,
             iridium_latitude: 50.2563,
             iridium_longitude: 82.2532,
@@ -855,7 +875,25 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
           })
         }
 
-        this.#write(`+SBDIX: ${success ? 0 : 32}, ${this.#moSequenceNo}, ${success ? 0 : 2}, ${this.#mtSequenceNo}, 0, 0`)
+        let mtStatus = success ? 0 : 2
+        let mtLength = 0
+        if (success && this.mtQueue.length > 0) {
+          this.#logger.debug('Moving the next available MT message from the queue into the buffer')
+          this.#mtBuffer = this.mtQueue.pop()
+          this.#mtSequenceNo++
+
+          const trimmedMtBuffer = trimBuffer(this.mtBuffer)
+
+          mtStatus = 1
+          mtLength = trimmedMtBuffer.length
+        }
+
+        if (success) {
+          // TODO: Need to confirm with specification when this is disabled.
+          this.#ringAlertActive = false
+        }
+
+        this.#write(`+SBDIX: ${success ? 0 : 32}, ${this.#moSequenceNo}, ${mtStatus}, ${this.#mtSequenceNo}, ${mtLength}, ${this.mtQueue.length}`)
         this.#write('OK')
 
         break
@@ -903,12 +941,12 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
         this.#write('OK')
         break
       case 'AT+SBDD1':
-        this.#mtBuffer = ''
+        this.#mtBuffer.fill(0)
         this.#write('OK')
         break
       case 'AT+SBDD2':
         this.#moBuffer.fill(0)
-        this.#mtBuffer = ''
+        this.#mtBuffer.fill(0)
         this.#write('OK')
         break
 
@@ -981,5 +1019,26 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
     setTimeout(function () {
       _this.#updateSignalQuality()
     }, waitTime)
+  }
+
+  /**
+   * Adds message to the "remote" MT queue. Simulating the
+   * Iridium ground station.
+   */
+  addRemoteMTMessage = (buffer: Buffer): void => {
+    if (!buffer || buffer.length > 270) {
+      throw RangeError(`Expected buffer length to be <= 270 but was ${buffer.length ?? 0}`)
+    }
+
+    this.mtQueue.push(buffer)
+
+    this.#logger.debug(`New message added to MT queue. Current queue length is ${this.mtQueue.length}`)
+
+    if (this.#ringAlertsEnabled && !this.#ringAlertActive) {
+      this.#logger.debug('Actived ring alert')
+
+      this.#ringAlertActive = true
+      this.#write('SBDRING')
+    }
   }
 }
