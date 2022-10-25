@@ -62,7 +62,7 @@ export function trimBuffer (buffer: Buffer) {
     break
   }
 
-  return buffer.slice(0, index + 1)
+  return index === 0 ? Buffer.alloc(0) : buffer.subarray(0, index + 1)
 }
 
 export function delay (ms: number) {

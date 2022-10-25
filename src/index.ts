@@ -280,7 +280,7 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
     this.#port = new SerialPort({
       path: portPath,
-      baudRate: baudRate
+      baudRate
     })
 
     this.#port.on('open', () => {
@@ -301,7 +301,9 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
     this.#mtQueue = []
     this.#moBuffer = Buffer.alloc(340)
+    this.#moBuffer.fill(0x00)
     this.#mtBuffer = Buffer.alloc(270)
+    this.#mtBuffer.fill(0x00)
     this.#binaryBuffer = null
     this.#binaryBufferLength = 0
     this.#binaryBufferTimeout = null
@@ -763,7 +765,8 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
           break
         }
 
-        this.#moBuffer = Buffer.from(detail)
+        this.#moBuffer.fill(0x00)
+        if (detail && detail.trim() !== '') this.#moBuffer.write(detail)
         this.#write('OK')
 
         break
@@ -784,7 +787,6 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
         length.writeUInt16BE(buffer.length)
 
         this.#writeBinary(Buffer.concat([length, buffer, checksum]))
-        // this.#write(`${length}${buffer.toString('hex')}${checksum.toString('hex')}`)
         break
       }
 
@@ -843,7 +845,7 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
           rbDateFormat = rbDateFormat
             .substring(0, rbDateFormat.length - 4) // drop milliseconds
 
-          const trimmedBuffer = trimBuffer(this.#moBuffer)
+          const trimmedBuffer = trimBuffer(this.moBuffer)
 
           this.#logger.debug('Emitting sbd-message event with message details')
           const claims = {
@@ -937,16 +939,16 @@ export class IridiumEmulator extends TypedEmitter<IridiumEmulatorInterface> {
 
       /** Short Burst Data: Clear SBD Message Buffer(s) */
       case 'AT+SBDD0':
-        this.#moBuffer.fill(0)
+        this.#moBuffer.fill(0x00)
         this.#write('OK')
         break
       case 'AT+SBDD1':
-        this.#mtBuffer.fill(0)
+        this.#mtBuffer.fill(0x00)
         this.#write('OK')
         break
       case 'AT+SBDD2':
-        this.#moBuffer.fill(0)
-        this.#mtBuffer.fill(0)
+        this.#moBuffer.fill(0x00)
+        this.#mtBuffer.fill(0x00)
         this.#write('OK')
         break
 
